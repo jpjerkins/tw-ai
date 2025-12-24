@@ -43,12 +43,15 @@ if __name__ == '__main__':
     # Example usage
     import sys
 
-    if len(sys.argv) < 2:
+    if len(sys.argv) < 1:
         print("Usage: python tiddlywiki_api.py <domain>")
         print("Example: python tiddlywiki_api.py localhost:8080")
         sys.exit(1)
 
-    domain = sys.argv[1]
+    if len(sys.argv) < 1:
+        domain = sys.argv[1]
+    else:
+        domain = "127.0.0.1:8080"
     try:
         tiddlers = get_tiddlers(domain)
         print(f"Found {len(tiddlers)} tiddlers:")
