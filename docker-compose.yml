@@ -1,0 +1,59 @@
+version: '3.8'
+
+services:
+  postgres:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: tiddlywiki_postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB:-tiddlywiki_rag}
+      POSTGRES_USER: ${POSTGRES_USER:-twrag}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+    ports:
+      - "${POSTGRES_PORT:-5432}:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+      - ./init:/docker-entrypoint-initdb.d:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-twrag} -d ${POSTGRES_DB:-tiddlywiki_rag}"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
+    networks:
+      - tiddlywiki_network
+
+  # Optional: Python application service (uncomment to run the app)
+  # app:
+  #   build:
+  #     context: .
+  #     dockerfile: Dockerfile.app
+  #   container_name: tiddlywiki_app
+  #   restart: unless-stopped
+  #   depends_on:
+  #     postgres:
+  #       condition: service_healthy
+  #   environment:
+  #     POSTGRES_HOST: postgres
+  #     POSTGRES_PORT: 5432
+  #     POSTGRES_DB: ${POSTGRES_DB:-tiddlywiki_rag}
+  #     POSTGRES_USER: ${POSTGRES_USER:-twrag}
+  #     POSTGRES_PASSWORD_FILE: /run/secrets/postgres_password
+  #     OPENAI_API_KEY_FILE: /run/secrets/openai_api_key
+  #   secrets:
+  #     - postgres_password
+  #     - openai_api_key
+  #   volumes:
+  #     - .:/app
+  #   networks:
+  #     - tiddlywiki_network
+
+volumes:
+  postgres_data:
+    driver: local
+
+networks:
+  tiddlywiki_network:
+    driver: bridge

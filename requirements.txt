@@ -1,0 +1,5 @@
+requests
+langchain-openai
+python-dotenv
+psycopg2-binary
+pgvector

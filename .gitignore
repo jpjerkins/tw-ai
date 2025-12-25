@@ -1,2 +1,25 @@
 .env
 node_modules
+
+# Docker secrets
+secrets/*.txt
+
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+*.egg-info/
+dist/
+build/
+
+# Docker volumes and overrides
+postgres_data/
+docker-compose.override.yml
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo

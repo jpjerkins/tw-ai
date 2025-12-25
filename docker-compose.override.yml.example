@@ -1,0 +1,34 @@
+# Docker Compose Override Example
+# Copy this file to docker-compose.override.yml and customize for your environment
+# This file is automatically loaded by docker-compose and can override/extend docker-compose.yml
+
+version: '3.8'
+
+services:
+  postgres:
+    # Development: Expose ports to host
+    ports:
+      - "127.0.0.1:5432:5432"  # Bind to localhost only for security
+
+    # Development: Enable verbose logging
+    command:
+      - "postgres"
+      - "-c"
+      - "log_statement=all"
+      - "-c"
+      - "log_min_duration_statement=0"
+
+    # Optional: Custom PostgreSQL configuration
+    # volumes:
+    #   - ./postgresql.conf:/etc/postgresql/postgresql.conf:ro
+
+  # app:
+  #   # Development: Mount code as volume for live reloading
+  #   volumes:
+  #     - .:/app
+  #   # Development: Override command to run interactively
+  #   command: ["python", "-u", "example_usage.py"]
+  #   # Development: Enable debugging
+  #   environment:
+  #     - PYTHONUNBUFFERED=1
+  #     - DEBUG=1
