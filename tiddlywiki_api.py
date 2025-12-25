@@ -2,6 +2,7 @@ import requests
 from typing import List, Dict, Any
 from urllib.parse import quote
 from langchain_openai import OpenAIEmbeddings
+from dotenv import load_dotenv
 
 
 def get_tiddlers(domain: str) -> List[Dict[str, Any]]:
@@ -199,6 +200,12 @@ def get_tiddlers_with_embeddings(domain: str, openai_api_key: str = None) -> Lis
 if __name__ == '__main__':
     # Example usage
     import sys
+    import os
+
+    # Load environment variables from .env
+    load_dotenv()
+
+    OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
 
     if len(sys.argv) < 1:
         print("Usage: python tiddlywiki_api.py <domain>")
@@ -210,10 +217,10 @@ if __name__ == '__main__':
     else:
         domain = "127.0.0.1:8080"
     try:
-        tiddlers = get_tiddlers(domain)
+        tiddlers = get_tiddlers_with_embeddings(domain, openai_api_key=OPENAI_API_KEY)
         print(f"Found {len(tiddlers)} tiddlers:")
         for tiddler in tiddlers:
-            print(f"  - {tiddler.get('title', 'Untitled')} (modified: {tiddler.get('modified', 'N/A')})")
+            print(f"  - {tiddler.get('title', 'Untitled')} (modified: {tiddler.get('modified', 'N/A')}))")
     except Exception as e:
         print(f"Error: {e}")
         sys.exit(1)
