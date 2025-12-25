@@ -243,7 +243,6 @@ def search_similar_tiddlers(query: str, top_k: int = 5, openai_api_key: str = No
 
     # Generate embedding for the query
     query_embedding = embeddings_model.embed_query(query)
-    print(f"query_embedding: {query_embedding}")
 
     # Get connection parameters from environment variables
     db_config = {
@@ -268,20 +267,6 @@ def search_similar_tiddlers(query: str, top_k: int = 5, openai_api_key: str = No
         # Query for similar tiddlers using cosine similarity
         # The <=> operator calculates cosine distance, so we use 1 - distance for similarity
         embedding_str = '[' + ','.join(map(str, query_embedding)) + ']'
-        search_query = f"""
-        SELECT
-            title,
-            link_url,
-            download_url,
-            embedding <-> {embedding_str} AS similarity,
-            text
-        FROM tiddlers
-        WHERE embedding IS NOT NULL
-        ORDER BY embedding <-> {embedding_str}
-        LIMIT {top_k};
-        """
-        print(search_query)
-
         search_query = f"""
         SELECT
             title,
