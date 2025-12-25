@@ -169,12 +169,14 @@ def get_tiddlers_with_embeddings(domain: str, openai_api_key: str = None) -> Lis
 
             # Build the full URL
             if not domain.startswith(('http://', 'https://')):
-                domain = f'http://{domain}'
-            full_url = f"{domain.rstrip('/')}{title_to_link_path(title)}"
+                domain = f'http://{domain}/'
+            link_url = f"{domain.rstrip('/')}/{title_to_link_path(title).lstrip('/')}"
+            download_url = f"{domain.rstrip('/')}/{title_to_download_path(title).lstrip('/')}"
 
             tiddler_data.append({
                 'title': title,
-                'url': full_url,
+                'link_url': link_url,
+                'download_url': download_url,
                 'text': text_content
             })
             texts.append(text_content)
@@ -190,7 +192,8 @@ def get_tiddlers_with_embeddings(domain: str, openai_api_key: str = None) -> Lis
     for i, tiddler in enumerate(tiddler_data):
         results.append({
             'title': tiddler['title'],
-            'url': tiddler['url'],
+            'link_url': tiddler['link_url'],
+            'download_url': tiddler['download_url'],
             'embedding': embeddings[i]
         })
 
@@ -220,7 +223,7 @@ if __name__ == '__main__':
         tiddlers = get_tiddlers_with_embeddings(domain, openai_api_key=OPENAI_API_KEY)
         print(f"Found {len(tiddlers)} tiddlers:")
         for tiddler in tiddlers:
-            print(f"  - {tiddler.get('title', 'Untitled')} (modified: {tiddler.get('modified', 'N/A')}))")
+            print(f"  - {tiddler.get('title', 'Untitled')} (modified: {tiddler.get('modified', 'N/A')}) (link_url: {tiddler.get('link_url', 'N/A')}))")
     except Exception as e:
         print(f"Error: {e}")
         sys.exit(1)
