@@ -131,7 +131,7 @@ def get_tiddler_content(domain: str, title: str) -> Dict[str, Any]:
     return response.json()
 
 
-def get_tiddlers_with_embeddings(domain: str, openai_api_key: str = None) -> List[Dict[str, Any]]:
+def get_tiddlers_with_embeddings(scan_domain: str, link_domain: str, openai_api_key: str = None) -> List[Dict[str, Any]]:
     """
     Fetch all tiddlers and generate OpenAI embeddings for their text content.
 
@@ -158,7 +158,7 @@ def get_tiddlers_with_embeddings(domain: str, openai_api_key: str = None) -> Lis
     embeddings_model = OpenAIEmbeddings(openai_api_key=openai_api_key) if openai_api_key else OpenAIEmbeddings()
 
     # Get list of tiddlers
-    tiddlers = get_tiddlers(domain)
+    tiddlers = get_tiddlers(scan_domain)
 
     # Fetch full content for each tiddler
     tiddler_data = []
@@ -167,14 +167,14 @@ def get_tiddlers_with_embeddings(domain: str, openai_api_key: str = None) -> Lis
     for tiddler in tiddlers:
         title = tiddler['title']
         try:
-            full_tiddler = get_tiddler_content(domain, title)
+            full_tiddler = get_tiddler_content(scan_domain, title)
             text_content = full_tiddler.get('text', '')
 
             # Build the full URL
-            if not domain.startswith(('http://', 'https://')):
-                domain = f'http://{domain}/'
-            link_url = f"{domain.rstrip('/')}/{title_to_link_path(title).lstrip('/')}"
-            download_url = f"{domain.rstrip('/')}/{title_to_download_path(title).lstrip('/')}"
+            if not scan_domain.startswith(('http://', 'https://')):
+                scan_domain = f'http://{scan_domain}/'
+            link_url = f"{link_domain.rstrip('/')}/{title_to_link_path(title).lstrip('/')}"
+            download_url = f"{scan_domain.rstrip('/')}/{title_to_download_path(title).lstrip('/')}"
 
             tiddler_data.append({
                 'title': title,
@@ -295,6 +295,68 @@ def search_similar_tiddlers(query: str, top_k: int = 5, openai_api_key: str = No
 
         return results
 
+    finally:
+        cur.close()
+        conn.close()
+
+
+def delete_all_embeddings(table_name: str = 'tiddlers') -> None:
+    """
+    Delete all tiddler embeddings from the PostgreSQL database.
+
+    Args:
+        table_name: Name of the table to clear (default: 'tiddlers')
+
+    Environment Variables Required:
+        POSTGRES_HOST: Database host (default: localhost)
+        POSTGRES_PORT: Database port (default: 5432)
+        POSTGRES_DB: Database name
+        POSTGRES_USER: Database user
+        POSTGRES_PASSWORD: Database password
+
+    Raises:
+        psycopg2.Error: If database connection or operations fail
+        ValueError: If required environment variables are missing
+
+    Example:
+        >>> load_dotenv()
+        >>> delete_all_embeddings()
+        Successfully deleted all embeddings from table 'tiddlers'
+    """
+    # Get connection parameters from environment variables
+    db_config = {
+        'host': os.getenv('POSTGRES_HOST', 'localhost'),
+        'port': os.getenv('POSTGRES_PORT', '5432'),
+        'database': os.getenv('POSTGRES_DB'),
+        'user': os.getenv('POSTGRES_USER'),
+        'password': os.getenv('POSTGRES_PASSWORD')
+    }
+
+    # Check for required environment variables
+    if not all([db_config['database'], db_config['user'], db_config['password']]):
+        raise ValueError(
+            "Missing required environment variables: POSTGRES_DB, POSTGRES_USER, and/or POSTGRES_PASSWORD"
+        )
+
+    # Connect to PostgreSQL
+    conn = psycopg2.connect(**db_config)
+    cur = conn.cursor()
+
+    try:
+        # Get count before deletion
+        cur.execute(f"SELECT COUNT(*) FROM {table_name};")
+        count = cur.fetchone()[0]
+
+        # Delete all records
+        cur.execute(f"DELETE FROM {table_name};")
+
+        # Commit the transaction
+        conn.commit()
+        print(f"Successfully deleted {count} tiddler(s) from table '{table_name}'")
+
+    except Exception as e:
+        conn.rollback()
+        raise e
     finally:
         cur.close()
         conn.close()
@@ -452,24 +514,118 @@ if __name__ == '__main__':
             import traceback
             traceback.print_exc()
             sys.exit(1)
-    else:
+    elif len(sys.argv) > 1 and sys.argv[1] == 'delete':
+        # Delete mode
+        try:
+            print("WARNING: This will delete all embeddings from the database!")
+            confirm = input("Are you sure you want to continue? (yes/no): ")
+
+            if confirm.lower() in ['yes', 'y']:
+                delete_all_embeddings()
+                print("\nAll embeddings have been deleted successfully.")
+            else:
+                print("Operation cancelled.")
+
+        except Exception as e:
+            print(f"Error: {e}")
+            import traceback
+            traceback.print_exc()
+            sys.exit(1)
+
+    elif len(sys.argv) > 1 and sys.argv[1] == 'scan':
         # Fetch and save mode
-        if len(sys.argv) > 1:
-            domain = sys.argv[1]
-        else:
-            domain = "127.0.0.1:8080"
+        if len(sys.argv) < 2:
+            print("Usage: python tiddlywiki_api.py scan <scan_domain> <link_domain>")
+            print("Example: python tiddlywiki_api.py scan '127.0.0.1:8081', 'www.tiddlywiki.org")
+            sys.exit(1)
+        scan_domain = sys.argv[2]
+        link_domain = sys.argv[3]
 
         try:
-            print(f"Fetching tiddlers from {domain}...")
-            tiddlers = get_tiddlers_with_embeddings(domain, openai_api_key=OPENAI_API_KEY)
+            print(f"Fetching tiddlers from {scan_domain}...")
+            tiddlers = get_tiddlers_with_embeddings(scan_domain, link_domain, openai_api_key=OPENAI_API_KEY)
             print(f"Found {len(tiddlers)} tiddlers with embeddings")
 
             # Save to PostgreSQL if environment variables are set
             if os.getenv('POSTGRES_DB'):
                 print("Saving to PostgreSQL database...")
                 save_tiddlers_to_postgres(tiddlers)
-                print("\nYou can now search with:")
+                print("\nAvailable commands:")
                 print("  python tiddlywiki_api.py search 'your query' [top_k]")
+                print("  python tiddlywiki_api.py delete")
+            else:
+                print("\nTo save to PostgreSQL, set the following environment variables:")
+                print("  POSTGRES_DB, POSTGRES_USER, POSTGRES_PASSWORD")
+                print("  POSTGRES_HOST (optional, default: localhost)")
+                print("  POSTGRES_PORT (optional, default: 5432)")
+
+            print(f"\nSample tiddlers:")
+            for tiddler in tiddlers[:5]:  # Show first 5
+                print(f"  - {tiddler['title']} ({len(tiddler['embedding'])} dimensions)")
+
+        except Exception as e:
+            print(f"Error: {e}")
+            import traceback
+            traceback.print_exc()
+            sys.exit(1)
+
+    elif len(sys.argv) > 1 and sys.argv[1] == 'reindex':
+        # Reindex mode
+        try:
+            if not os.getenv('POSTGRES_DB'):
+                print("\nTo save to PostgreSQL, set the following environment variables:")
+                print("  POSTGRES_DB, POSTGRES_USER, POSTGRES_PASSWORD")
+                print("  POSTGRES_HOST (optional, default: localhost)")
+                print("  POSTGRES_PORT (optional, default: 5432)")
+                sys.exit(1)
+
+            print("WARNING: This will delete all embeddings from the database!")
+            confirm = input("Are you sure you want to continue? (yes/no): ")
+
+            if confirm.lower() in ['yes', 'y']:
+                delete_all_embeddings()
+                print("All embeddings have been deleted successfully.")
+            else:
+                print("Operation cancelled.")
+
+            for scan_domain, link_domain in [("127.0.0.1:8081", "www.tiddlywiki.com"), ("127.0.0.1:8082", "groktiddlywiki.com"), ("127.0.0.1:8083", "tiddlywiki.com/dev")]:
+                print(f"\nScanning from {scan_domain} (links to {link_domain})...")
+                tiddlers = get_tiddlers_with_embeddings(scan_domain, link_domain, openai_api_key=OPENAI_API_KEY)
+                print(f"Found {len(tiddlers)} tiddlers with embeddings from {scan_domain} (link to {link_domain})")
+
+                # Save to PostgreSQL if environment variables are set
+                print("Saving to PostgreSQL database...")
+
+            save_tiddlers_to_postgres(tiddlers)
+            print("\nAvailable commands:")
+            print("  python tiddlywiki_api.py search 'your query' [top_k]")
+            print("  python tiddlywiki_api.py delete")
+
+            print(f"\nSample tiddlers:")
+            for tiddler in tiddlers[:5]:  # Show first 5
+                print(f"  - {tiddler['title']} ({len(tiddler['embedding'])} dimensions)")
+                
+        except Exception as e:
+            print(f"Error: {e}")
+            import traceback
+            traceback.print_exc()
+            sys.exit(1)
+
+    else:
+        domain = "127.0.0.1:8080"
+
+        try:
+            print(f"Fetching tiddlers from {domain}...")
+            tiddlers = get_tiddlers_with_embeddings(domain, domain, openai_api_key=OPENAI_API_KEY)
+            print(f"Found {len(tiddlers)} tiddlers with embeddings")
+
+            # Save to PostgreSQL if environment variables are set
+            if os.getenv('POSTGRES_DB'):
+                print("Saving to PostgreSQL database...")
+                save_tiddlers_to_postgres(tiddlers)
+                print("\nAvailable commands:")
+                print("  python tiddlywiki_api.py search 'your query' [top_k]")
+                print("  python tiddlywiki_api.py delete")
             else:
                 print("\nTo save to PostgreSQL, set the following environment variables:")
                 print("  POSTGRES_DB, POSTGRES_USER, POSTGRES_PASSWORD")
