@@ -1,7 +1,10 @@
 import requests
 from typing import List, Dict, Any
 from urllib.parse import quote
-from langchain_openai import OpenAIEmbeddings
+from langchain_openai import OpenAIEmbeddings, ChatOpenAI
+from langchain_core.prompts import ChatPromptTemplate
+from langchain_core.output_parsers import StrOutputParser
+from langchain_core.runnables import RunnablePassthrough
 from dotenv import load_dotenv
 import psycopg2
 from psycopg2.extras import execute_values
@@ -162,7 +165,7 @@ def get_tiddlers_with_embeddings(scan_domain: str, link_domain: str, openai_api_
 
     # Fetch full content for each tiddler
     tiddler_data = []
-    texts = []
+    titles = []
 
     for tiddler in tiddlers:
         title = tiddler['title']
@@ -182,13 +185,13 @@ def get_tiddlers_with_embeddings(scan_domain: str, link_domain: str, openai_api_
                 'download_url': download_url,
                 'text': text_content
             })
-            texts.append(text_content)
+            titles.append(title)
         except Exception as e:
             print(f"Warning: Could not fetch tiddler '{title}': {e}")
             continue
 
-    # Generate embeddings for all texts at once
-    embeddings = embeddings_model.embed_documents(texts)
+    # Generate embeddings for all titles at once
+    embeddings = embeddings_model.embed_documents(titles)
 
     # Combine the data with embeddings
     results = []
@@ -265,7 +268,7 @@ def search_similar_tiddlers(query: str, top_k: int = 5, openai_api_key: str = No
 
     try:
         # Query for similar tiddlers using cosine similarity
-        # The <=> operator calculates cosine distance, so we use 1 - distance for similarity
+        # The <-> operator calculates cosine distance, so we use 1 - distance for similarity
         embedding_str = '[' + ','.join(map(str, query_embedding)) + ']'
         search_query = f"""
         SELECT
@@ -298,6 +301,210 @@ def search_similar_tiddlers(query: str, top_k: int = 5, openai_api_key: str = No
     finally:
         cur.close()
         conn.close()
+
+
+def search_similar_tiddlers_with_text(query: str, top_k: int = 5, openai_api_key: str = None) -> List[Dict[str, Any]]:
+    """
+    Search for tiddlers most similar to the given query string, including their text content.
+
+    Args:
+        query: The search query string to find similar tiddlers for
+        top_k: Number of top results to return (default: 5)
+        openai_api_key: Optional OpenAI API key (if not set in environment)
+
+    Returns:
+        A list of dictionaries containing:
+        - title: The tiddler title
+        - link_url: URL to view the tiddler
+        - download_url: URL to download the tiddler
+        - text: The full text content of the tiddler
+        - similarity: Cosine similarity score (0-1, higher is more similar)
+
+    Environment Variables Required:
+        POSTGRES_HOST: Database host (default: localhost)
+        POSTGRES_PORT: Database port (default: 5432)
+        POSTGRES_DB: Database name
+        POSTGRES_USER: Database user
+        POSTGRES_PASSWORD: Database password
+        OPENAI_API_KEY: OpenAI API key (if not passed as parameter)
+
+    Raises:
+        psycopg2.Error: If database connection or query fails
+        ValueError: If required environment variables are missing
+    """
+    # Initialize OpenAI embeddings model
+    embeddings_model = OpenAIEmbeddings(openai_api_key=openai_api_key) if openai_api_key else OpenAIEmbeddings()
+
+    # Generate embedding for the query
+    query_embedding = embeddings_model.embed_query(query)
+
+    # Get connection parameters from environment variables
+    db_config = {
+        'host': os.getenv('POSTGRES_HOST', 'localhost'),
+        'port': os.getenv('POSTGRES_PORT', '5432'),
+        'database': os.getenv('POSTGRES_DB'),
+        'user': os.getenv('POSTGRES_USER'),
+        'password': os.getenv('POSTGRES_PASSWORD')
+    }
+
+    # Check for required environment variables
+    if not all([db_config['database'], db_config['user'], db_config['password']]):
+        raise ValueError(
+            "Missing required environment variables: POSTGRES_DB, POSTGRES_USER, and/or POSTGRES_PASSWORD"
+        )
+
+    # Connect to PostgreSQL
+    conn = psycopg2.connect(**db_config)
+    cur = conn.cursor()
+
+    try:
+        # Query for similar tiddlers using cosine similarity
+        embedding_str = '[' + ','.join(map(str, query_embedding)) + ']'
+        search_query = f"""
+        SELECT
+            title,
+            link_url,
+            download_url,
+            text,
+            embedding <-> %s AS similarity
+        FROM tiddlers
+        WHERE embedding IS NOT NULL
+        ORDER BY embedding <-> %s
+        LIMIT %s;
+        """
+
+        cur.execute(search_query, (embedding_str, embedding_str, top_k))
+        rows = cur.fetchall()
+
+        # Format results
+        results = []
+        for row in rows:
+            results.append({
+                'title': row[0],
+                'link_url': row[1],
+                'download_url': row[2],
+                'text': row[3],
+                'similarity': float(row[4])
+            })
+
+        return results
+
+    finally:
+        cur.close()
+        conn.close()
+
+
+def answer_question_with_tiddlers(question: str, top_k: int = 5, openai_api_key: str = None, model: str = "gpt-4o-mini") -> Dict[str, Any]:
+    """
+    Answer a question using relevant tiddlers from the database with LangChain v1.
+
+    This function performs semantic search to find the most relevant tiddlers,
+    then uses LangChain to generate an answer based on their content.
+
+    Args:
+        question: The question to answer
+        top_k: Number of top relevant tiddlers to use (default: 5)
+        openai_api_key: Optional OpenAI API key (if not set in environment)
+        model: OpenAI model to use (default: "gpt-4o-mini")
+
+    Returns:
+        A dictionary containing:
+        - question: The original question
+        - answer: The generated answer
+        - sources: List of tiddlers used as sources
+
+    Environment Variables Required:
+        POSTGRES_HOST: Database host (default: localhost)
+        POSTGRES_PORT: Database port (default: 5432)
+        POSTGRES_DB: Database name
+        POSTGRES_USER: Database user
+        POSTGRES_PASSWORD: Database password
+        OPENAI_API_KEY: OpenAI API key (if not passed as parameter)
+
+    Raises:
+        ValueError: If required environment variables are missing
+        Exception: If search or LLM operations fail
+
+    Example:
+        >>> load_dotenv()
+        >>> result = answer_question_with_tiddlers("How do I create a new tiddler?")
+        >>> print(result['answer'])
+        >>> for source in result['sources']:
+        ...     print(f"- {source['title']}")
+    """
+    # Search for relevant tiddlers
+    print(f"Searching for relevant tiddlers...")
+    tiddlers = search_similar_tiddlers_with_text(question, top_k=top_k, openai_api_key=openai_api_key)
+
+    if not tiddlers:
+        return {
+            'question': question,
+            'answer': "I couldn't find any relevant tiddlers to answer your question.",
+            'sources': []
+        }
+
+    # Prepare context from tiddlers
+    context_parts = []
+    for i, tiddler in enumerate(tiddlers, 1):
+        context_parts.append(
+            f"Source {i}: {tiddler['title']}\n"
+            f"URL: {tiddler['link_url']}\n"
+            f"Content: {tiddler['text']}\n"
+        )
+    context = "\n---\n".join(context_parts)
+
+    # Create LangChain prompt template
+    template = """You are a helpful assistant that answers questions based on the provided TiddlyWiki tiddlers.
+
+Use the following tiddler contents to answer the question. If the tiddlers don't contain enough information to answer the question, say so clearly.
+
+Question: {question}
+
+Tiddler Contents:
+{context}
+
+Please provide a clear, comprehensive answer based on the information above. If you reference specific information, mention which tiddler it came from with both its title and link_url."""
+
+    prompt = ChatPromptTemplate.from_template(template)
+
+    # Initialize LangChain components
+    llm = ChatOpenAI(
+        model=model,
+        temperature=0,
+        openai_api_key=openai_api_key
+    )
+    output_parser = StrOutputParser()
+
+    # Create the chain using LCEL (LangChain Expression Language)
+    chain = (
+        {
+            "context": lambda x: x["context"],
+            "question": lambda x: x["question"]
+        }
+        | prompt
+        | llm
+        | output_parser
+    )
+
+    # Generate answer
+    print(f"Generating answer using {model}...")
+    answer = chain.invoke({"context": context, "question": question})
+
+    # Prepare sources
+    sources = [
+        {
+            'title': t['title'],
+            'link_url': t['link_url'],
+            'similarity': t['similarity']
+        }
+        for t in tiddlers
+    ]
+
+    return {
+        'question': question,
+        'answer': answer,
+        'sources': sources
+    }
 
 
 def delete_all_embeddings(table_name: str = 'tiddlers') -> None:
@@ -532,6 +739,49 @@ if __name__ == '__main__':
             traceback.print_exc()
             sys.exit(1)
 
+    elif len(sys.argv) > 1 and sys.argv[1] == 'ask':
+        # Ask mode - answer questions using tiddlers
+        if len(sys.argv) < 3:
+            print("Usage: python tiddlywiki_api.py ask <question> [top_k] [model]")
+            print("Example: python tiddlywiki_api.py ask 'How do I create a tiddler?' 5 gpt-4o-mini")
+            print("\nAvailable models: gpt-4o-mini (default), gpt-4o, gpt-4-turbo, gpt-3.5-turbo")
+            sys.exit(1)
+
+        question = sys.argv[2]
+        top_k = int(sys.argv[3]) if len(sys.argv) > 3 else 5
+        model = sys.argv[4] if len(sys.argv) > 4 else "gpt-4o-mini"
+
+        try:
+            print(f"Question: {question}")
+            print(f"Using top {top_k} relevant tiddlers")
+            print(f"Model: {model}\n")
+
+            result = answer_question_with_tiddlers(
+                question=question,
+                top_k=top_k,
+                openai_api_key=OPENAI_API_KEY,
+                model=model
+            )
+
+            print("\n" + "="*80)
+            print("ANSWER:")
+            print("="*80)
+            print(result['answer'])
+            print("\n" + "="*80)
+            print("SOURCES:")
+            print("="*80)
+            for i, source in enumerate(result['sources'], 1):
+                print(f"{i}. {source['title']}")
+                print(f"   Similarity: {source['similarity']:.4f}")
+                print(f"   URL: {source['link_url']}")
+                print()
+
+        except Exception as e:
+            print(f"Error: {e}")
+            import traceback
+            traceback.print_exc()
+            sys.exit(1)
+
     elif len(sys.argv) > 1 and sys.argv[1] == 'scan':
         # Fetch and save mode
         if len(sys.argv) < 2:
@@ -552,6 +802,7 @@ if __name__ == '__main__':
                 save_tiddlers_to_postgres(tiddlers)
                 print("\nAvailable commands:")
                 print("  python tiddlywiki_api.py search 'your query' [top_k]")
+                print("  python tiddlywiki_api.py ask 'your question' [top_k] [model]")
                 print("  python tiddlywiki_api.py delete")
             else:
                 print("\nTo save to PostgreSQL, set the following environment variables:")
@@ -625,6 +876,7 @@ if __name__ == '__main__':
                 save_tiddlers_to_postgres(tiddlers)
                 print("\nAvailable commands:")
                 print("  python tiddlywiki_api.py search 'your query' [top_k]")
+                print("  python tiddlywiki_api.py ask 'your question' [top_k] [model]")
                 print("  python tiddlywiki_api.py delete")
             else:
                 print("\nTo save to PostgreSQL, set the following environment variables:")
