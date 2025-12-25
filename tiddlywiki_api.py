@@ -165,7 +165,7 @@ def get_tiddlers_with_embeddings(scan_domain: str, link_domain: str, openai_api_
 
     # Fetch full content for each tiddler
     tiddler_data = []
-    titles = []
+    texts = []
 
     for tiddler in tiddlers:
         title = tiddler['title']
@@ -185,13 +185,13 @@ def get_tiddlers_with_embeddings(scan_domain: str, link_domain: str, openai_api_
                 'download_url': download_url,
                 'text': text_content
             })
-            titles.append(title)
+            texts.append(text_content)
         except Exception as e:
             print(f"Warning: Could not fetch tiddler '{title}': {e}")
             continue
 
-    # Generate embeddings for all titles at once
-    embeddings = embeddings_model.embed_documents(titles)
+    # Generate embeddings for all texts at once
+    embeddings = embeddings_model.embed_documents(texts)
 
     # Combine the data with embeddings
     results = []
@@ -205,102 +205,6 @@ def get_tiddlers_with_embeddings(scan_domain: str, link_domain: str, openai_api_
         })
 
     return results
-
-
-def search_similar_tiddlers(query: str, top_k: int = 5, openai_api_key: str = None) -> List[Dict[str, Any]]:
-    """
-    Search for tiddlers most similar to the given query string using semantic search.
-
-    Args:
-        query: The search query string to find similar tiddlers for
-        top_k: Number of top results to return (default: 5)
-        openai_api_key: Optional OpenAI API key (if not set in environment)
-
-    Returns:
-        A list of dictionaries containing:
-        - title: The tiddler title
-        - link_url: URL to view the tiddler
-        - download_url: URL to download the tiddler
-        - similarity: Cosine similarity score (0-1, higher is more similar)
-
-    Environment Variables Required:
-        POSTGRES_HOST: Database host (default: localhost)
-        POSTGRES_PORT: Database port (default: 5432)
-        POSTGRES_DB: Database name
-        POSTGRES_USER: Database user
-        POSTGRES_PASSWORD: Database password
-        OPENAI_API_KEY: OpenAI API key (if not passed as parameter)
-
-    Raises:
-        psycopg2.Error: If database connection or query fails
-        ValueError: If required environment variables are missing
-
-    Example:
-        >>> load_dotenv()
-        >>> results = search_similar_tiddlers("machine learning concepts", top_k=3)
-        >>> for result in results:
-        ...     print(f"{result['title']}: {result['similarity']:.3f}")
-    """
-    # Initialize OpenAI embeddings model
-    embeddings_model = OpenAIEmbeddings(openai_api_key=openai_api_key) if openai_api_key else OpenAIEmbeddings()
-
-    # Generate embedding for the query
-    query_embedding = embeddings_model.embed_query(query)
-
-    # Get connection parameters from environment variables
-    db_config = {
-        'host': os.getenv('POSTGRES_HOST', 'localhost'),
-        'port': os.getenv('POSTGRES_PORT', '5432'),
-        'database': os.getenv('POSTGRES_DB'),
-        'user': os.getenv('POSTGRES_USER'),
-        'password': os.getenv('POSTGRES_PASSWORD')
-    }
-
-    # Check for required environment variables
-    if not all([db_config['database'], db_config['user'], db_config['password']]):
-        raise ValueError(
-            "Missing required environment variables: POSTGRES_DB, POSTGRES_USER, and/or POSTGRES_PASSWORD"
-        )
-
-    # Connect to PostgreSQL
-    conn = psycopg2.connect(**db_config)
-    cur = conn.cursor()
-
-    try:
-        # Query for similar tiddlers using cosine similarity
-        # The <-> operator calculates cosine distance, so we use 1 - distance for similarity
-        embedding_str = '[' + ','.join(map(str, query_embedding)) + ']'
-        search_query = f"""
-        SELECT
-            title,
-            link_url,
-            download_url,
-            embedding <-> %s AS similarity,
-            text
-        FROM tiddlers
-        WHERE embedding IS NOT NULL
-        ORDER BY embedding <-> %s
-        LIMIT %s;
-        """
-
-        cur.execute(search_query, (embedding_str, embedding_str, top_k))
-        rows = cur.fetchall()
-
-        # Format results
-        results = []
-        for row in rows:
-            results.append({
-                'title': row[0],
-                'link_url': row[1],
-                'download_url': row[2],
-                'similarity': float(row[3])
-            })
-
-        return results
-
-    finally:
-        cur.close()
-        conn.close()
 
 
 def search_similar_tiddlers_with_text(query: str, top_k: int = 5, openai_api_key: str = None) -> List[Dict[str, Any]]:
@@ -704,7 +608,7 @@ if __name__ == '__main__':
             print(f"Searching for: '{query}'")
             print(f"Retrieving top {top_k} results...\n")
 
-            results = search_similar_tiddlers(query, top_k=top_k, openai_api_key=OPENAI_API_KEY)
+            results = search_similar_tiddlers_with_text(query, top_k=top_k, openai_api_key=OPENAI_API_KEY)
 
             if results:
                 print(f"Found {len(results)} similar tiddlers:\n")
