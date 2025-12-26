@@ -615,7 +615,7 @@ if __name__ == '__main__':
                 for i, result in enumerate(results, 1):
                     print(f"{i}. {result['title']}")
                     print(f"   Similarity: {result['similarity']:.4f}")
-                    print(f"   URL: {result['link_url']}")
+                    print(f"   URL: https://{result['link_url']}")
                     print()
             else:
                 print("No results found.")
