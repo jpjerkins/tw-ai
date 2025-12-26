@@ -207,6 +207,238 @@ def get_tiddlers_with_embeddings(scan_domain: str, link_domain: str, openai_api_
     return results
 
 
+def exact_search(query: str, top_k: int = 5):
+    """Exact keyword matching for specific terms, names, dates"""
+        
+    # Get connection parameters from environment variables
+    db_config = {
+        'host': os.getenv('POSTGRES_HOST', 'localhost'),
+        'port': os.getenv('POSTGRES_PORT', '5432'),
+        'database': os.getenv('POSTGRES_DB'),
+        'user': os.getenv('POSTGRES_USER'),
+        'password': os.getenv('POSTGRES_PASSWORD')
+    }
+
+    # Check for required environment variables
+    if not all([db_config['database'], db_config['user'], db_config['password']]):
+        raise ValueError(
+            "Missing required environment variables: POSTGRES_DB, POSTGRES_USER, and/or POSTGRES_PASSWORD"
+        )
+    
+    # Connect to PostgreSQL
+    conn = psycopg2.connect(**db_config)
+    cur = conn.cursor()
+
+    try:
+        # Query for similar tiddlers using cosine similarity
+        search_query = """
+        SELECT
+            'EXACT' AS match_type,
+            title,
+            link_url,
+            download_url,
+            text,
+            1.0 AS rank
+        FROM tiddlers
+        WHERE text ILIKE %s
+        ORDER BY char_length(text)  -- Prefer shorter, more focused articles
+        LIMIT %s
+        """
+
+        cur.execute(search_query, (f"%{query}%", top_k))
+        rows = cur.fetchall()
+
+        # Format results
+        results = []
+        for row in rows:
+            results.append({
+                'match_type': row[0],
+                'title': row[1],
+                'link_url': row[2],
+                'download_url': row[3],
+                'text': row[4],
+                'rank': float(row[5])
+            })
+
+        return results
+
+    finally:
+        cur.close()
+        conn.close()
+
+
+def full_text_search(query: str, top_k: int = 5):
+    """Full text matching for specific terms, names, dates"""
+        
+    # Get connection parameters from environment variables
+    db_config = {
+        'host': os.getenv('POSTGRES_HOST', 'localhost'),
+        'port': os.getenv('POSTGRES_PORT', '5432'),
+        'database': os.getenv('POSTGRES_DB'),
+        'user': os.getenv('POSTGRES_USER'),
+        'password': os.getenv('POSTGRES_PASSWORD')
+    }
+
+    # Check for required environment variables
+    if not all([db_config['database'], db_config['user'], db_config['password']]):
+        raise ValueError(
+            "Missing required environment variables: POSTGRES_DB, POSTGRES_USER, and/or POSTGRES_PASSWORD"
+        )
+    
+    # Connect to PostgreSQL
+    conn = psycopg2.connect(**db_config)
+    cur = conn.cursor()
+
+    try:
+        # Query for similar tiddlers using cosine similarity
+        search_query = """
+        SELECT
+            'FULLTEXT' AS match_type,
+            title,
+            link_url,
+            download_url,
+            text,
+            ts_rank_cd(
+                to_tsvector('english', text),
+                plainto_tsquery('english', %s)
+            )  AS rank
+        FROM tiddlers,
+            plainto_tsquery('english', %s) query
+        WHERE to_tsvector('english', text) @@ query
+        ORDER BY rank DESC
+        LIMIT %s
+        """
+
+        cur.execute(search_query, (query, query, top_k))
+        rows = cur.fetchall()
+
+        # Format results
+        results = []
+        for row in rows:
+            results.append({
+                'match_type': row[0],
+                'title': row[1],
+                'link_url': row[2],
+                'download_url': row[3],
+                'text': row[4],
+                'rank': float(row[5])
+            })
+
+        return results
+
+    finally:
+        cur.close()
+        conn.close()
+
+
+def similarity_search(query: str, top_k: int = 5, openai_api_key: str = None) -> List[Dict[str, Any]]:
+    """
+    Search for tiddlers most similar to the given query string, including their text content.
+
+    Args:
+        query: The search query string to find similar tiddlers for
+        top_k: Number of top results to return (default: 5)
+        openai_api_key: Optional OpenAI API key (if not set in environment)
+
+    Returns:
+        A list of dictionaries containing:
+        - title: The tiddler title
+        - link_url: URL to view the tiddler
+        - download_url: URL to download the tiddler
+        - text: The full text content of the tiddler
+        - similarity: Cosine similarity score (0-1, higher is more similar)
+
+    Environment Variables Required:
+        POSTGRES_HOST: Database host (default: localhost)
+        POSTGRES_PORT: Database port (default: 5432)
+        POSTGRES_DB: Database name
+        POSTGRES_USER: Database user
+        POSTGRES_PASSWORD: Database password
+        OPENAI_API_KEY: OpenAI API key (if not passed as parameter)
+
+    Raises:
+        psycopg2.Error: If database connection or query fails
+        ValueError: If required environment variables are missing
+    """
+
+    # Initialize OpenAI embeddings model
+    embeddings_model = OpenAIEmbeddings(openai_api_key=openai_api_key) if openai_api_key else OpenAIEmbeddings()
+
+    # Generate embedding for the query
+    query_embedding = embeddings_model.embed_query(query)
+
+    # Get connection parameters from environment variables
+    db_config = {
+        'host': os.getenv('POSTGRES_HOST', 'localhost'),
+        'port': os.getenv('POSTGRES_PORT', '5432'),
+        'database': os.getenv('POSTGRES_DB'),
+        'user': os.getenv('POSTGRES_USER'),
+        'password': os.getenv('POSTGRES_PASSWORD')
+    }
+
+    # Check for required environment variables
+    if not all([db_config['database'], db_config['user'], db_config['password']]):
+        raise ValueError(
+            "Missing required environment variables: POSTGRES_DB, POSTGRES_USER, and/or POSTGRES_PASSWORD"
+        )
+    
+    # Connect to PostgreSQL
+    conn = psycopg2.connect(**db_config)
+    cur = conn.cursor()
+
+    try:
+        # Query for similar tiddlers using cosine similarity
+        embedding_str = '[' + ','.join(map(str, query_embedding)) + ']'
+        search_query = f"""
+        SELECT
+            'SIMILARITY' AS match_type,
+            title,
+            link_url,
+            download_url,
+            text,
+            1.0 - (embedding <-> %s) AS rank
+        FROM tiddlers
+        WHERE embedding IS NOT NULL
+        ORDER BY embedding <-> %s
+        LIMIT %s;
+        """
+
+        cur.execute(search_query, (embedding_str, embedding_str, top_k))
+        rows = cur.fetchall()
+
+        # Format results
+        results = []
+        for row in rows:
+            results.append({
+                'match_type': row[0],
+                'title': row[1],
+                'link_url': row[2],
+                'download_url': row[3],
+                'text': row[4],
+                'rank': float(row[5])
+            })
+
+        return results
+
+    finally:
+        cur.close()
+        conn.close()
+
+
+def combine_search_results(sets_of_results: List[List[Dict[str, Any]]]) -> List[Dict[str, Any]]:
+    seen_urls = set()
+    results = []
+    for result_set in sets_of_results:
+        for result in result_set:
+            link_url = result["link_url"]
+            if link_url in seen_urls:
+                continue
+            results.append(result)
+            seen_urls.add(link_url)
+    print(f"Returning {len(results)} results from combine_search_results")
+    return sorted(results, key=lambda r: r["rank"], reverse=True)
+
+
 def search_similar_tiddlers_with_text(query: str, top_k: int = 5, openai_api_key: str = None) -> List[Dict[str, Any]]:
     """
     Search for tiddlers most similar to the given query string, including their text content.
@@ -236,66 +468,16 @@ def search_similar_tiddlers_with_text(query: str, top_k: int = 5, openai_api_key
         psycopg2.Error: If database connection or query fails
         ValueError: If required environment variables are missing
     """
-    # Initialize OpenAI embeddings model
-    embeddings_model = OpenAIEmbeddings(openai_api_key=openai_api_key) if openai_api_key else OpenAIEmbeddings()
+    exact_match_results = exact_search(query, top_k)
+    print(f"Found {len(exact_match_results)} with an exact match")
+    full_text_results = full_text_search(query, top_k)
+    print(f"Found {len(full_text_results)} with a full text match")
+    similarity_results = similarity_search(query, top_k, openai_api_key)
+    print(f"Found {len(similarity_results)} with similarity match")
 
-    # Generate embedding for the query
-    query_embedding = embeddings_model.embed_query(query)
+    final_results = combine_search_results([exact_match_results, full_text_results, similarity_results])
 
-    # Get connection parameters from environment variables
-    db_config = {
-        'host': os.getenv('POSTGRES_HOST', 'localhost'),
-        'port': os.getenv('POSTGRES_PORT', '5432'),
-        'database': os.getenv('POSTGRES_DB'),
-        'user': os.getenv('POSTGRES_USER'),
-        'password': os.getenv('POSTGRES_PASSWORD')
-    }
-
-    # Check for required environment variables
-    if not all([db_config['database'], db_config['user'], db_config['password']]):
-        raise ValueError(
-            "Missing required environment variables: POSTGRES_DB, POSTGRES_USER, and/or POSTGRES_PASSWORD"
-        )
-
-    # Connect to PostgreSQL
-    conn = psycopg2.connect(**db_config)
-    cur = conn.cursor()
-
-    try:
-        # Query for similar tiddlers using cosine similarity
-        embedding_str = '[' + ','.join(map(str, query_embedding)) + ']'
-        search_query = f"""
-        SELECT
-            title,
-            link_url,
-            download_url,
-            text,
-            embedding <-> %s AS similarity
-        FROM tiddlers
-        WHERE embedding IS NOT NULL
-        ORDER BY embedding <-> %s
-        LIMIT %s;
-        """
-
-        cur.execute(search_query, (embedding_str, embedding_str, top_k))
-        rows = cur.fetchall()
-
-        # Format results
-        results = []
-        for row in rows:
-            results.append({
-                'title': row[0],
-                'link_url': row[1],
-                'download_url': row[2],
-                'text': row[3],
-                'similarity': float(row[4])
-            })
-
-        return results
-
-    finally:
-        cur.close()
-        conn.close()
+    return final_results
 
 
 def answer_question_with_tiddlers(question: str, top_k: int = 5, openai_api_key: str = None, model: str = "gpt-4o-mini") -> Dict[str, Any]:
@@ -614,7 +796,7 @@ if __name__ == '__main__':
                 print(f"Found {len(results)} similar tiddlers:\n")
                 for i, result in enumerate(results, 1):
                     print(f"{i}. {result['title']}")
-                    print(f"   Similarity: {result['similarity']:.4f}")
+                    print(f"   Similarity: {result['rank']:.4f}")
                     print(f"   URL: https://{result['link_url']}")
                     print()
             else:
