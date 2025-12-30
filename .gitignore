@@ -13,6 +13,7 @@ __pycache__/
 *.egg-info/
 dist/
 build/
+.venv/Lib/
 
 # Docker volumes and overrides
 postgres_data/
