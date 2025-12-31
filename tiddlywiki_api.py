@@ -1004,43 +1004,160 @@ if __name__ == '__main__':
             traceback.print_exc()
             sys.exit(1)
 
-    elif len(sys.argv) > 1 and sys.argv[1] == 'scan':
-        # Fetch and save mode
-        if len(sys.argv) < 2:
-            print("Usage: python tiddlywiki_api.py scan <scan_domain> <link_domain>")
-            print("Example: python tiddlywiki_api.py scan '127.0.0.1:8081', 'www.tiddlywiki.org")
-            sys.exit(1)
-        scan_domain = sys.argv[2]
-        link_domain = sys.argv[3]
+    elif len(sys.argv) > 1 and sys.argv[1] == 'serve':
+        # Start TiddlyWiki servers for local instances
+        import subprocess
+        import time
+        import shutil
 
-        try:
-            print(f"Fetching tiddlers from {scan_domain}...")
-            tiddlers = get_tiddlers_with_embeddings(scan_domain, link_domain, openai_api_key=OPENAI_API_KEY)
-            print(f"Found {len(tiddlers)} tiddlers with embeddings")
+        # Configuration for TiddlyWiki instances
+        # Format: (folder, port, live_url, filter)
+        wikis = [
+            ("TW.org", 8081, "https://tiddlywiki.com", None),
+            ("GrokTW", 8082, "https://groktiddlywiki.com", "[all[shadows]!prefix[$]!prefix[Ex:]!prefix[Sn]!prefix[Ta]sort[title]]"),
+            ("DevTW", 8083, "https://tiddlywiki.com/dev", None)
+        ]
 
-            # Save to PostgreSQL if environment variables are set
-            if os.getenv('POSTGRES_DB'):
-                print("Saving to PostgreSQL database...")
-                save_tiddlers_to_postgres(tiddlers)
-                print("\nAvailable commands:")
-                print("  python tiddlywiki_api.py search 'your query' [top_k]")
-                print("  python tiddlywiki_api.py ask 'your question' [top_k] [model]")
-                print("  python tiddlywiki_api.py delete")
-            else:
-                print("\nTo save to PostgreSQL, set the following environment variables:")
-                print("  POSTGRES_DB, POSTGRES_USER, POSTGRES_PASSWORD")
-                print("  POSTGRES_HOST (optional, default: localhost)")
-                print("  POSTGRES_PORT (optional, default: 5432)")
+        print("Starting TiddlyWiki servers...")
+        print("=" * 80)
 
-            print(f"\nSample tiddlers:")
-            for tiddler in tiddlers[:5]:  # Show first 5
-                print(f"  - {tiddler['title']} ({len(tiddler['embedding'])} dimensions)")
+        processes = []
 
-        except Exception as e:
-            print(f"Error: {e}")
-            import traceback
-            traceback.print_exc()
-            sys.exit(1)
+        for folder, port, live_url, filter_expr in wikis:
+            folder_path = os.path.join(os.getcwd(), folder)
+            html_file = os.path.join(os.getcwd(), f"{folder}.html")
+            hidden_settings_path = os.path.join(os.getcwd(), "TW Hidden Settings")
+
+            print(f"\nPreparing {folder}:")
+            print(f"  - Source: {live_url}")
+
+            # Delete existing folder if it exists
+            if os.path.exists(folder_path):
+                print(f"  - Deleting existing folder: {folder}")
+                shutil.rmtree(folder_path)
+                print(f"  - Folder deleted")
+
+            # Create fresh folder
+            print(f"  - Creating fresh folder: {folder}")
+            os.makedirs(folder_path, exist_ok=True)
+
+            # Download the HTML from the website
+            print(f"  - Downloading latest content from {live_url}...")
+            try:
+                response = requests.get(live_url, timeout=30)
+                response.raise_for_status()
+
+                with open(html_file, 'wb') as f:
+                    f.write(response.content)
+                print(f"  - Downloaded to {html_file}")
+
+            except Exception as e:
+                print(f"  - Error downloading: {e}")
+                print(f"  - Skipping {folder}")
+                continue
+
+            # Import the HTML into the TiddlyWiki folder
+            print(f"  - Importing into TiddlyWiki folder...")
+            try:
+                import_cmd = [
+                    shutil.which("tiddlywiki"),
+                    "--load", html_file,
+                    "--savewikifolder", folder_path
+                ]
+                print(f"  - Import command: {import_cmd}")
+
+                result = subprocess.run(
+                    import_cmd,
+                    capture_output=True,
+                    text=True,
+                    timeout=60,
+                    shell=True
+                )
+
+                if result.returncode == 0:
+                    print(f"  - Successfully imported content")
+                else:
+                    print(f"  - Import warning: {result.stderr[:200]}")
+
+                # Clean up the HTML file
+                # if os.path.exists(html_file):
+                #     os.remove(html_file)
+
+            except Exception as e:
+                print(f"  - Error importing: {e}")
+                print(f"  - Skipping {folder}")
+                continue
+
+            # Copy TW Hidden Settings to the tiddlers subfolder
+            tiddlers_folder = os.path.join(folder_path, "tiddlers")
+            if os.path.exists(hidden_settings_path) and os.path.exists(tiddlers_folder):
+                print(f"  - Copying TW Hidden Settings to tiddlers folder...")
+                try:
+                    # Copy all files from TW Hidden Settings to the tiddlers folder
+                    for item in os.listdir(hidden_settings_path):
+                        source = os.path.join(hidden_settings_path, item)
+                        destination = os.path.join(tiddlers_folder, item)
+
+                        if os.path.isfile(source):
+                            shutil.copy2(source, destination)
+                        elif os.path.isdir(source):
+                            shutil.copytree(source, destination, dirs_exist_ok=True)
+
+                    print(f"  - Successfully copied hidden settings")
+                except Exception as e:
+                    print(f"  - Error copying hidden settings: {e}")
+            elif not os.path.exists(hidden_settings_path):
+                print(f"  - Warning: TW Hidden Settings folder not found")
+            elif not os.path.exists(tiddlers_folder):
+                print(f"  - Warning: tiddlers subfolder not found in {folder}")
+
+            # Start TiddlyWiki server
+            print(f"  - Starting server on port {port}...")
+            try:
+                cmd = [
+                    shutil.which("tiddlywiki"),
+                    folder_path,
+                    "--listen",
+                    f"host=127.0.0.1",
+                    f"port={port}"
+                ]
+                print(f"  - Serve command: {cmd}")
+
+                process = subprocess.Popen(
+                    cmd,
+                    stdout=subprocess.PIPE,
+                    stderr=subprocess.PIPE,
+                    text=True
+                )
+                processes.append((folder, port, process))
+                print(f"  - Server started: http://127.0.0.1:{port}")
+                time.sleep(1)  # Brief pause between starts
+
+            except Exception as e:
+                print(f"  - Error starting server: {e}")
+
+        if processes:
+            print("\n" + "=" * 80)
+            print("All servers started successfully!")
+            print("\nRunning servers:")
+            for folder, port, _ in processes:
+                print(f"  - {folder}: http://127.0.0.1:{port}")
+
+            print("\nPress Ctrl+C to stop all servers...")
+
+            try:
+                # Keep script running
+                while True:
+                    time.sleep(1)
+            except KeyboardInterrupt:
+                print("\n\nStopping all servers...")
+                for folder, port, process in processes:
+                    process.terminate()
+                    print(f"  - Stopped {folder} (port {port})")
+                print("\nAll servers stopped.")
+        else:
+            print("\nFailed to start any TiddlyWiki servers.")
+            print("Please check the errors above.")
 
     elif len(sys.argv) > 1 and sys.argv[1] == 'reindex':
         # Reindex mode

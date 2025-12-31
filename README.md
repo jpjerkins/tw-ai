@@ -27,12 +27,17 @@ cp .env.example .env
 # Edit .env with your actual credentials
 ```
 
-3. **Install dependencies**
+3. **Install Python dependencies**
 ```bash
 pip install -r requirements.txt
 ```
 
-4. **Set up PostgreSQL with pgvector**
+4. **Install TiddlyWiki (if not already installed)**
+```bash
+npm install -g tiddlywiki
+```
+
+5. **Set up PostgreSQL with pgvector**
 
    **Option A: Docker Compose (Recommended)**
    ```bash
@@ -46,13 +51,28 @@ pip install -r requirements.txt
    psql -d your_database -c "CREATE EXTENSION vector;"
    ```
 
-5. **Index your TiddlyWiki**
+6. **Start local TiddlyWiki servers (automatically downloads latest content)**
 ```bash
-# Scan a TiddlyWiki instance and create embeddings
-python tiddlywiki_api.py scan localhost:8080 localhost:8080
+# Download latest content from websites and start servers
+python tiddlywiki_api.py serve
 ```
 
-6. **Search and ask questions**
+This command will:
+- Delete existing TW.org, GrokTW, and DevTW folders (ensuring fresh content)
+- Download the latest HTML from each website
+- Import the HTML into each TiddlyWiki folder
+- Copy contents from "TW Hidden Settings" folder into each wiki's /tiddlers subfolder
+- Start local servers on ports 8081, 8082, and 8083
+
+This ensures you always have the most up-to-date content with custom settings before indexing.
+
+7. **Index your TiddlyWikis** (in a new terminal)
+```bash
+# Reindex all configured TiddlyWiki instances
+python tiddlywiki_api.py reindex
+```
+
+8. **Search and ask questions**
 ```bash
 # Search for tiddlers
 python tiddlywiki_api.py search "your search query"
@@ -83,14 +103,25 @@ POSTGRES_PASSWORD=your_db_password   # Required
 
 ### Command Line Interface
 
-**Scan and index a TiddlyWiki instance:**
+**Start local TiddlyWiki servers:**
 ```bash
-# Basic scan
-python tiddlywiki_api.py scan <scan_domain> <link_domain>
-
-# Example: scan local instance, link to production
-python tiddlywiki_api.py scan 127.0.0.1:8080 www.example.com
+# Download latest content and start all servers
+python tiddlywiki_api.py serve
 ```
+
+This command:
+1. **Deletes** existing folders (TW.org, GrokTW, DevTW) to ensure fresh content
+2. **Downloads** the latest HTML from each website
+3. **Imports** the content into TiddlyWiki folders
+4. **Copies** custom settings from "TW Hidden Settings" folder into each wiki
+5. **Starts** servers on ports 8081, 8082, and 8083
+
+This ensures you always have the most recent content from:
+- `TW.org` (port 8081) - https://tiddlywiki.com
+- `GrokTW` (port 8082) - https://groktiddlywiki.com
+- `DevTW` (port 8083) - https://tiddlywiki.com/dev
+
+Press `Ctrl+C` to stop all servers.
 
 **Search for tiddlers (hybrid search):**
 ```bash
@@ -115,11 +146,20 @@ python tiddlywiki_api.py ask "How do I create a custom widget?"
 python tiddlywiki_api.py ask "What are filters?" 10 gpt-4o
 ```
 
-**Reindex multiple TiddlyWiki instances:**
+**Reindex all TiddlyWiki instances:**
 ```bash
-# Deletes existing data and reindexes from configured sources
+# Deletes existing data and reindexes from all configured local instances
 python tiddlywiki_api.py reindex
 ```
+
+This command:
+1. Deletes all existing embeddings (with confirmation)
+2. Connects to all three local TiddlyWiki servers (ports 8081, 8082, 8083)
+3. Fetches tiddlers from each instance
+4. Generates embeddings for all content
+5. Saves everything to PostgreSQL
+
+**Note:** Ensure the TiddlyWiki servers are running (`serve` command) before running `reindex`.
 
 **Delete all embeddings:**
 ```bash
@@ -324,11 +364,45 @@ Convert tiddler title to API download path.
 #### `delete_all_embeddings(table_name: str = 'tiddlers') -> None`
 Delete all tiddler records from the database.
 
+## Project Structure
+
+The `serve` command automatically creates and populates three TiddlyWiki folders:
+
+```
+tw-ai/
+├── TW.org/              # Official TiddlyWiki docs (auto-created fresh each time)
+├── GrokTW/              # Grok TiddlyWiki tutorials (auto-created fresh each time)
+├── DevTW/               # TiddlyWiki dev docs (auto-created fresh each time)
+├── TW Hidden Settings/  # Custom tiddlers to inject into each wiki (optional)
+├── tiddlywiki_api.py
+├── .env
+└── ...
+```
+
+**Automatic Setup:**
+
+When you run `python tiddlywiki_api.py serve`, the command will:
+1. **Delete** existing TW.org, GrokTW, and DevTW folders (ensuring clean slate)
+2. **Download** the latest HTML from each website:
+   - TW.org from https://tiddlywiki.com
+   - GrokTW from https://groktiddlywiki.com
+   - DevTW from https://tiddlywiki.com/dev
+3. **Import** each HTML file into its respective folder using TiddlyWiki's `--savewikifolder` command
+4. **Copy** all files from "TW Hidden Settings" folder into each wiki's `/tiddlers` subfolder (if the folder exists)
+5. **Start** local servers for each instance
+
+**TW Hidden Settings Folder (Optional):**
+
+If you want to inject custom tiddlers into all three wikis (e.g., custom CSS, configuration, or hidden tiddlers), create a folder named "TW Hidden Settings" in the project root and add your tiddler files there. These will be automatically copied into each wiki's tiddlers folder during the serve process.
+
+This means you don't need to manually set up these folders - just run the `serve` command and it will handle everything!
+
 ## Requirements
 
 - **Python 3.8+**
 - **PostgreSQL 12+** with pgvector extension
 - **OpenAI API key** for embeddings and question answering
+- **TiddlyWiki** (Node.js version) for running local servers
 
 ### Python Dependencies
 
@@ -351,22 +425,30 @@ pip install -r requirements.txt
 
 ## Common Use Cases
 
-### 1. Index Multiple TiddlyWiki Sites
+### 1. Complete Workflow
 ```python
 from tiddlywiki_api import get_tiddlers_with_embeddings, save_tiddlers_to_postgres
+from dotenv import load_dotenv
+
+load_dotenv()
+
+# First, start servers with: python tiddlywiki_api.py serve
+# Then index all local TiddlyWiki instances
 
 wikis = [
-    ("localhost:8081", "www.tiddlywiki.com"),
-    ("localhost:8082", "groktiddlywiki.com"),
-    ("localhost:8083", "tiddlywiki.com/dev")
+    ("127.0.0.1:8081", "https://tiddlywiki.com", None),
+    ("127.0.0.1:8082", "https://groktiddlywiki.com", "[all[shadows]!prefix[$]]"),
+    ("127.0.0.1:8083", "https://tiddlywiki.com/dev", None)
 ]
 
 all_tiddlers = []
-for scan_domain, link_domain in wikis:
-    tiddlers = get_tiddlers_with_embeddings(scan_domain, link_domain)
+for scan_domain, link_domain, filter_expr in wikis:
+    print(f"Fetching from {scan_domain}...")
+    tiddlers = get_tiddlers_with_embeddings(scan_domain, link_domain, filter_expr)
     all_tiddlers.extend(tiddlers)
 
 save_tiddlers_to_postgres(all_tiddlers)
+print(f"Indexed {len(all_tiddlers)} tiddlers total")
 ```
 
 ### 2. Search with Filters
@@ -411,6 +493,14 @@ for section in sections:
 ```
 
 ## Troubleshooting
+
+### TiddlyWiki Server Issues
+If the `serve` command fails:
+- **TiddlyWiki not found**: Install TiddlyWiki globally: `npm install -g tiddlywiki`
+- **Download fails**: Check your internet connection or if the websites are accessible
+- **Port already in use**: Check if ports 8081-8083 are available with `netstat -an | grep 808`
+- **Permission denied**: Ensure you have read/write access to create folders in the project directory
+- **Import errors**: The command will continue with existing content if import fails
 
 ### Database Connection Issues
 If you get connection errors:
