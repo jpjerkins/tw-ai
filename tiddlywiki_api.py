@@ -715,7 +715,7 @@ Please provide a clear, comprehensive answer based on the information above. If 
         {
             'title': t['title'],
             'link_url': t['link_url'],
-            'similarity': t['similarity']
+            'rank': t['rank']
         }
         for t in tiddlers
     ]
@@ -994,7 +994,7 @@ if __name__ == '__main__':
             print("="*80)
             for i, source in enumerate(result['sources'], 1):
                 print(f"{i}. {source['title']}")
-                print(f"   Similarity: {source['similarity']:.4f}")
+                print(f"   Rank: {source['rank']:.4f}")
                 print(f"   URL: {source['link_url']}")
                 print()
 
