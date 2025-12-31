@@ -140,6 +140,70 @@ def strip_wikitext(text: str) -> str:
     return text.strip()
 
 
+def split_by_headings(text: str) -> List[Dict[str, str]]:
+    """
+    Split TiddlyWiki wikitext by headings into sections.
+
+    Args:
+        text: The string containing TiddlyWiki wikitext with headings
+
+    Returns:
+        A list of dictionaries, where each dict has one key-value pair:
+        - Key: The original heading line (e.g., "! Main Heading")
+        - Value: All wikitext content between that heading (including the heading itself) and the next (or end of string)
+
+    Example:
+        >>> text = "! Heading 1\\nContent 1\\n!! Heading 2\\nContent 2"
+        >>> result = split_by_headings(text)
+        >>> result
+        [{'! Heading 1': '! Heading 1\nContent 1\\n'}, {'!! Heading 2': '!! Heading 2\nContent 2'}]
+
+        >>> text = "Intro text\\n! Section 1\\nText here\\n! Section 2\\nMore text"
+        >>> result = split_by_headings(text)
+        >>> result
+        [{'_preamble': 'Intro text\\n'}, {'! Section 1': '! Section 1\nText here\\n'}, {'! Section 2': '! Section 2\nMore text'}]
+    """
+    if not text:
+        return []
+
+    # Split into lines
+    lines = text.split('\n')
+
+    sections = []
+    current_heading = None
+    current_content = []
+
+    for line in lines:
+        # Check if line is a heading (starts with !)
+        if re.match(r'^!+\s+', line):
+            # Save previous section if it exists
+            if current_heading is not None:
+                content = '\n'.join(current_content)
+                sections.append({current_heading: content})
+            elif current_content:
+                # Content before first heading (preamble)
+                content = '\n'.join(current_content)
+                sections.append({'_preamble': content})
+
+            # Start new section
+            current_heading = line
+            current_content = [line]
+        else:
+            # Add line to current content
+            current_content.append(line)
+
+    # Don't forget the last section
+    if current_heading is not None:
+        content = '\n'.join(current_content)
+        sections.append({current_heading: content})
+    elif current_content:
+        # If no headings at all, return content under '_preamble'
+        content = '\n'.join(current_content)
+        sections.append({'_preamble': content})
+
+    return sections
+
+
 def get_tiddlers(domain: str, filter: str = None) -> List[Dict[str, Any]]:
     """
     Fetch a list of tiddlers from a TiddlyWiki instance.
@@ -337,6 +401,82 @@ def get_tiddlers_with_embeddings(scan_domain: str, link_domain: str, filter: str
             'embedding': embeddings[i],
             'text': tiddler['text']
         })
+
+    return results
+
+
+def get_tiddler_section_embeddings(scan_domain: str, link_domain: str, filter: str = None, openai_api_key: str = None) -> List[Dict[str, Any]]:
+    """
+    Fetch all tiddlers and generate OpenAI embeddings for their text content.
+
+    Args:
+        scan_domain: The domain of the TiddlyWiki instance to be scanned
+        link_domain: The domain that the user should be linked to when displaying results
+        filter: An optional filter that should be sent to the scan_domain to filter tiddlers
+        openai_api_key: Optional OpenAI API key (if not set in environment)
+
+    Returns:
+        A list of dictionaries containing:
+        - title: The tiddler title
+        - url: The full URL path to the tiddler
+        - embedding: The OpenAI embedding vector for the tiddler's text
+
+    Raises:
+        requests.RequestException: If any HTTP request fails
+        ValueError: If OpenAI API key is not provided or set in environment
+
+    Example:
+        >>> results = get_tiddler_section_embeddings("localhost:8080")
+        >>> for item in results:
+        ...     print(f"{item['title']}: {len(item['embedding'])} dimensions")
+    """
+    # Initialize OpenAI embeddings model
+    embeddings_model = OpenAIEmbeddings(openai_api_key=openai_api_key) if openai_api_key else OpenAIEmbeddings()
+
+    # Get list of tiddlers
+    tiddlers = get_tiddlers(scan_domain)
+
+    # Fetch full content for each tiddler
+    tiddler_data = []
+    texts = []
+
+    for tiddler in tiddlers:
+        title = tiddler['title']
+        try:
+            full_tiddler = get_tiddler_content(scan_domain, title)
+            text_content = full_tiddler.get('text', '')
+
+            # Build the full URL
+            if not scan_domain.startswith(('http://', 'https://')):
+                scan_domain = f'http://{scan_domain}/'
+            link_url = f"{link_domain.rstrip('/')}/{title_to_link_path(title).lstrip('/')}"
+            download_url = f"{scan_domain.rstrip('/')}/{title_to_download_path(title).lstrip('/')}"
+
+            tiddler_data.append({
+                'title': title,
+                'link_url': link_url,
+                'download_url': download_url,
+                'text': text_content
+            })
+            texts.append(text_content)
+        except Exception as e:
+            print(f"Warning: Could not fetch tiddler '{title}': {e}")
+            continue
+
+    # Generate embeddings for all texts at once
+    embeddings = embeddings_model.embed_documents(texts)
+
+    # Combine the data with embeddings
+    tiddler_results = []
+    for i, tiddler in enumerate(tiddler_data):
+        tiddler_result = {
+            'title': tiddler['title'],
+            'link_url': tiddler['link_url'],
+            'download_url': tiddler['download_url'],
+            'embedding': embeddings[i],
+            'text': strip_html(tiddler['text'])
+        }
+        tiddler_results.append(tiddler_result)
 
     return results
 
