@@ -9,14 +9,144 @@ from dotenv import load_dotenv
 import psycopg2
 from psycopg2.extras import execute_values
 import os
+import re
+import html
 
 
-def get_tiddlers(domain: str) -> List[Dict[str, Any]]:
+def strip_html(text: str) -> str:
+    """
+    Remove all HTML tags and entities from a string.
+
+    Args:
+        text: The string containing HTML markup
+
+    Returns:
+        A clean string with all HTML tags removed and HTML entities decoded
+
+    Example:
+        >>> strip_html("<p>Hello &amp; welcome!</p>")
+        'Hello & welcome!'
+        >>> strip_html("<div>Line 1<br>Line 2</div>")
+        'Line 1 Line 2'
+        >>> strip_html("Plain text")
+        'Plain text'
+    """
+    if not text:
+        return ""
+
+    # Remove HTML tags
+    text = re.sub(r'<[^>]+>', '', text)
+
+    # Decode HTML entities (e.g., &amp; -> &, &lt; -> <, &nbsp; -> space)
+    text = html.unescape(text)
+
+    # Clean up excessive whitespace
+    text = re.sub(r'\s+', ' ', text)
+
+    # Strip leading/trailing whitespace
+    return text.strip()
+
+
+def strip_wikitext(text: str) -> str:
+    """
+    Remove all TiddlyWiki wikitext markup from a string, leaving only plain text.
+
+    Args:
+        text: The string containing TiddlyWiki wikitext markup
+
+    Returns:
+        A clean string with all wikitext syntax removed
+
+    Example:
+        >>> strip_wikitext("''bold'' and //italic// text")
+        'bold and italic text'
+        >>> strip_wikitext("[[Link to Tiddler]]")
+        'Link to Tiddler'
+        >>> strip_wikitext("[[Displayed Text|Target]]")
+        'Displayed Text'
+        >>> strip_wikitext("! Header\\n\\nNormal text")
+        'Header Normal text'
+    """
+    if not text:
+        return ""
+
+    # Remove HTML/XML comments
+    text = re.sub(r'<!--.*?-->', '', text, flags=re.DOTALL)
+
+    # Remove TiddlyWiki widgets (e.g., <$widget>...</$widget>)
+    text = re.sub(r'<\$[^>]*>.*?</\$[^>]*>', '', text, flags=re.DOTALL)
+    text = re.sub(r'<\$[^>]*/?>', '', text)
+
+    # Remove macros (e.g., <<macro param>>)
+    text = re.sub(r'<<[^>]+>>', '', text)
+
+    # Remove transclusions (e.g., {{tiddler}}, {{tiddler||template}})
+    text = re.sub(r'\{\{[^}]+\}\}', '', text)
+
+    # Remove images (e.g., [img[url]], [img[tooltip|url]])
+    text = re.sub(r'\[img\[[^\]]+\]\]', '', text)
+
+    # Extract text from external links (e.g., [ext[text|url]] -> text)
+    text = re.sub(r'\[ext\[([^\]|]+)\|[^\]]+\]\]', r'\1', text)
+    text = re.sub(r'\[ext\[([^\]]+)\]\]', r'\1', text)
+
+    # Extract text from internal links with custom display text (e.g., [[Display|Target]] -> Display)
+    text = re.sub(r'\[\[([^\]|]+)\|[^\]]+\]\]', r'\1', text)
+
+    # Extract text from simple internal links (e.g., [[Target]] -> Target)
+    text = re.sub(r'\[\[([^\]]+)\]\]', r'\1', text)
+
+    # Remove code blocks (multi-line)
+    text = re.sub(r'```.*?```', '', text, flags=re.DOTALL)
+
+    # Remove inline code
+    text = re.sub(r'`[^`]+`', '', text)
+
+    # Remove formatting markers
+    text = re.sub(r"'''", '', text)  # Bold (triple quotes)
+    text = re.sub(r"''", '', text)   # Bold (double quotes)
+    text = re.sub(r'//', '', text)   # Italic
+    text = re.sub(r'__', '', text)   # Underline
+    text = re.sub(r'~~', '', text)   # Strikethrough
+    text = re.sub(r'\^\^', '', text) # Superscript
+    text = re.sub(r',,', '', text)   # Subscript
+
+    # Remove headers (e.g., ! !! !!!)
+    text = re.sub(r'^!+\s*', '', text, flags=re.MULTILINE)
+
+    # Remove horizontal rules
+    text = re.sub(r'^---+\s*$', '', text, flags=re.MULTILINE)
+
+    # Remove list markers (*, #, ;, :)
+    text = re.sub(r'^\s*[\*#;:]+\s*', '', text, flags=re.MULTILINE)
+
+    # Remove blockquote markers (<<<)
+    text = re.sub(r'^<<<+\s*', '', text, flags=re.MULTILINE)
+
+    # Remove table syntax (|cell|cell|)
+    text = re.sub(r'\|', ' ', text)
+
+    # Remove definition lists markers
+    text = re.sub(r'^;', '', text, flags=re.MULTILINE)
+    text = re.sub(r'^:', '', text, flags=re.MULTILINE)
+
+    # Remove remaining brackets and braces
+    text = re.sub(r'[\[\]\{\}]', '', text)
+
+    # Clean up excessive whitespace
+    text = re.sub(r'\s+', ' ', text)
+
+    # Strip leading/trailing whitespace
+    return text.strip()
+
+
+def get_tiddlers(domain: str, filter: str = None) -> List[Dict[str, Any]]:
     """
     Fetch a list of tiddlers from a TiddlyWiki instance.
 
     Args:
         domain: The domain of the TiddlyWiki instance (e.g., "example.com" or "http://example.com")
+        filter: An optional filter that should be sent to the scan_domain to filter tiddlers
 
     Returns:
         A list of tiddler objects, each containing metadata like title, created, modified, tags, etc.
@@ -39,6 +169,8 @@ def get_tiddlers(domain: str) -> List[Dict[str, Any]]:
 
     # Construct the full URL
     url = f'{domain}/recipes/default/tiddlers.json'
+    if filter is not None:
+        url += f"?filter={filter}"
 
     # Make the request
     response = requests.get(url)
@@ -134,12 +266,14 @@ def get_tiddler_content(domain: str, title: str) -> Dict[str, Any]:
     return response.json()
 
 
-def get_tiddlers_with_embeddings(scan_domain: str, link_domain: str, openai_api_key: str = None) -> List[Dict[str, Any]]:
+def get_tiddlers_with_embeddings(scan_domain: str, link_domain: str, filter: str = None, openai_api_key: str = None) -> List[Dict[str, Any]]:
     """
     Fetch all tiddlers and generate OpenAI embeddings for their text content.
 
     Args:
-        domain: The domain of the TiddlyWiki instance
+        scan_domain: The domain of the TiddlyWiki instance to be scanned
+        link_domain: The domain that the user should be linked to when displaying results
+        filter: An optional filter that should be sent to the scan_domain to filter tiddlers
         openai_api_key: Optional OpenAI API key (if not set in environment)
 
     Returns:
@@ -161,7 +295,7 @@ def get_tiddlers_with_embeddings(scan_domain: str, link_domain: str, openai_api_
     embeddings_model = OpenAIEmbeddings(openai_api_key=openai_api_key) if openai_api_key else OpenAIEmbeddings()
 
     # Get list of tiddlers
-    tiddlers = get_tiddlers(scan_domain)
+    tiddlers = get_tiddlers(scan_domain, filter)
 
     # Fetch full content for each tiddler
     tiddler_data = []
@@ -171,7 +305,7 @@ def get_tiddlers_with_embeddings(scan_domain: str, link_domain: str, openai_api_
         title = tiddler['title']
         try:
             full_tiddler = get_tiddler_content(scan_domain, title)
-            text_content = full_tiddler.get('text', '')
+            text_content = strip_html(strip_wikitext(full_tiddler.get('text', '')))
 
             # Build the full URL
             if not scan_domain.startswith(('http://', 'https://')):
@@ -201,7 +335,7 @@ def get_tiddlers_with_embeddings(scan_domain: str, link_domain: str, openai_api_
             'link_url': tiddler['link_url'],
             'download_url': tiddler['download_url'],
             'embedding': embeddings[i],
-            'text': text_content
+            'text': tiddler['text']
         })
 
     return results
@@ -396,10 +530,10 @@ def similarity_search(query: str, top_k: int = 5, openai_api_key: str = None) ->
             link_url,
             download_url,
             text,
-            1.0 - (embedding <-> %s) AS rank
+            embedding <-> %s AS rank
         FROM tiddlers
         WHERE embedding IS NOT NULL
-        ORDER BY embedding <-> %s
+        ORDER BY embedding <-> %s ASC
         LIMIT %s;
         """
 
@@ -798,6 +932,7 @@ if __name__ == '__main__':
                     print(f"{i}. {result['title']}")
                     print(f"   Similarity: {result['rank']:.4f}")
                     print(f"   URL: https://{result['link_url']}")
+                    print(f"   Text: {result['text'][:100]}")
                     print()
             else:
                 print("No results found.")
@@ -807,6 +942,7 @@ if __name__ == '__main__':
             import traceback
             traceback.print_exc()
             sys.exit(1)
+
     elif len(sys.argv) > 1 and sys.argv[1] == 'delete':
         # Delete mode
         try:
@@ -925,21 +1061,23 @@ if __name__ == '__main__':
             else:
                 print("Operation cancelled.")
 
-            for scan_domain, link_domain in [("127.0.0.1:8081", "www.tiddlywiki.com"), ("127.0.0.1:8082", "groktiddlywiki.com"), ("127.0.0.1:8083", "tiddlywiki.com/dev")]:
+            all_tiddlers = []
+            for scan_domain, link_domain, filter in [("127.0.0.1:8081", "www.tiddlywiki.com", None), ("127.0.0.1:8082", "groktiddlywiki.com", "[all[shadows]!prefix[$]!prefix[Ex:]!prefix[Sn]!prefix[Ta]sort[title]]"), ("127.0.0.1:8083", "tiddlywiki.com/dev", None)]:
                 print(f"\nScanning from {scan_domain} (links to {link_domain})...")
-                tiddlers = get_tiddlers_with_embeddings(scan_domain, link_domain, openai_api_key=OPENAI_API_KEY)
-                print(f"Found {len(tiddlers)} tiddlers with embeddings from {scan_domain} (link to {link_domain})")
+                tiddlers_for_domain = get_tiddlers_with_embeddings(scan_domain, link_domain, filter, openai_api_key=OPENAI_API_KEY)
+                print(f"Found {len(tiddlers_for_domain)} tiddlers with embeddings from {scan_domain} (link to {link_domain})")
+                all_tiddlers.extend(tiddlers_for_domain)
 
-                # Save to PostgreSQL if environment variables are set
-                print("Saving to PostgreSQL database...")
+            # Save to PostgreSQL if environment variables are set
+            print("Saving to PostgreSQL database...")
 
-            save_tiddlers_to_postgres(tiddlers)
+            save_tiddlers_to_postgres(all_tiddlers)
             print("\nAvailable commands:")
             print("  python tiddlywiki_api.py search 'your query' [top_k]")
             print("  python tiddlywiki_api.py delete")
 
             print(f"\nSample tiddlers:")
-            for tiddler in tiddlers[:5]:  # Show first 5
+            for tiddler in all_tiddlers[:5]:  # Show first 5
                 print(f"  - {tiddler['title']} ({len(tiddler['embedding'])} dimensions)")
                 
         except Exception as e:
