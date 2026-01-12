@@ -1,4 +1,8 @@
-# TiddlyWiki AI Integration
+# TW AI
+
+TW AI project: A self-hosted RAG for TW documentation
+
+![Screenshot of TW AI](Screenshot.png)
 
 Python tools for fetching TiddlyWiki tiddlers, generating embeddings, and storing them in PostgreSQL with pgvector for semantic search and question answering.
 
