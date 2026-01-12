@@ -106,7 +106,21 @@ export default function ResponseDisplay({ response, error }) {
           },
         }}
       >
-        <ReactMarkdown remarkPlugins={[remarkGfm]}>
+        <ReactMarkdown remarkPlugins={[remarkGfm]}
+          components={{
+          a: ({ node, children, ...props }) => {
+            // Add target="_blank" and rel="noopener noreferrer" to the link
+            return (
+              <a
+                {...props}
+                target="_blank"
+                rel="noopener noreferrer" // Recommended for security
+              >
+                {children}
+              </a>
+            );
+          },
+        }}>
           {response}
         </ReactMarkdown>
       </Box>
