@@ -292,7 +292,10 @@ def get_tiddlers_with_embeddings(scan_domain: str, link_domain: str, filter: str
         ...     print(f"{item['title']}: {len(item['embedding'])} dimensions")
     """
     # Initialize OpenAI embeddings model
-    embeddings_model = OpenAIEmbeddings(openai_api_key=openai_api_key) if openai_api_key else OpenAIEmbeddings()
+    api_key = openai_api_key or os.getenv('OPENAI_API_KEY')
+    if not api_key:
+        raise ValueError("OpenAI API key must be provided or set in OPENAI_API_KEY environment variable")
+    embeddings_model = OpenAIEmbeddings(api_key=api_key)
 
     # Get list of tiddlers
     tiddlers = get_tiddlers(scan_domain, filter)
@@ -496,7 +499,10 @@ def similarity_search(query: str, top_k: int = 5, openai_api_key: str = None) ->
     """
 
     # Initialize OpenAI embeddings model
-    embeddings_model = OpenAIEmbeddings(openai_api_key=openai_api_key) if openai_api_key else OpenAIEmbeddings()
+    api_key = openai_api_key or os.getenv('OPENAI_API_KEY')
+    if not api_key:
+        raise ValueError("OpenAI API key must be provided or set in OPENAI_API_KEY environment variable")
+    embeddings_model = OpenAIEmbeddings(api_key=api_key)
 
     # Generate embedding for the query
     query_embedding = embeddings_model.embed_query(query)
@@ -687,11 +693,16 @@ Please provide a clear, comprehensive answer based on the information above. If 
 
     prompt = ChatPromptTemplate.from_template(template)
 
+    # Get API key from environment if not provided
+    api_key = openai_api_key or os.getenv('OPENAI_API_KEY')
+    if not api_key:
+        raise ValueError("OpenAI API key must be provided or set in OPENAI_API_KEY environment variable")
+
     # Initialize LangChain components
     llm = ChatOpenAI(
         model=model,
         temperature=0,
-        openai_api_key=openai_api_key
+        api_key=api_key  # Use api_key parameter instead of openai_api_key
     )
     output_parser = StrOutputParser()
 

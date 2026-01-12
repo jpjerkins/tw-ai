@@ -83,6 +83,40 @@ python tiddlywiki_api.py ask "How do I create a custom widget?"
 
 See [DOCKER.md](DOCKER.md) for complete Docker deployment documentation.
 
+## Web UI
+
+A React-based web interface is available for easier interaction with the AI assistant.
+
+### Quick Start (Web UI)
+
+1. **Install additional API dependencies**
+```bash
+pip install -r requirements-api.txt
+```
+
+2. **Start the API server**
+```bash
+python api_server.py
+```
+
+The API will run on `http://localhost:5000`
+
+3. **In a new terminal, start the React UI**
+```bash
+cd ui
+npm install
+npm run dev
+```
+
+The UI will be available at `http://localhost:5173`
+
+4. **Use the interface**
+   - Enter your question in the text box
+   - Click Submit or press Enter
+   - View the AI-generated answer with clickable source links
+
+See [ui/README.md](ui/README.md) for detailed UI documentation.
+
 ## Environment Variables
 
 Create a `.env` file in the project root (copy from `.env.example`):
