@@ -8,6 +8,8 @@ Python tools for fetching TiddlyWiki tiddlers, generating embeddings, and storin
 - **Generate OpenAI embeddings** for tiddler content with automatic HTML/wikitext stripping
 - **Hybrid search** combining exact match, full-text search, and semantic similarity
 - **Question answering** using RAG (Retrieval-Augmented Generation) with LangChain
+- **Web UI** - React-based interface with Material-UI for easy querying and browsing results
+- **REST API** - Flask-based API server for integrating with web applications
 - **Text processing utilities** for HTML stripping, wikitext removal, and heading-based splitting
 - **PostgreSQL storage** with pgvector for efficient vector similarity search
 - **Automatic database** schema creation and indexing
@@ -85,7 +87,15 @@ See [DOCKER.md](DOCKER.md) for complete Docker deployment documentation.
 
 ## Web UI
 
-A React-based web interface is available for easier interaction with the AI assistant.
+A modern, React-based web interface is available for easier interaction with the AI assistant. Built with Material-UI and following Atomic Design patterns, it provides a clean, simple interface for querying the TiddlyWiki knowledge base.
+
+### Prerequisites (Web UI)
+
+Before starting the Web UI, ensure you have completed steps 1-7 from the Quick Start above:
+- PostgreSQL with pgvector is running
+- Environment variables are configured
+- TiddlyWiki servers are running (or were run to download content)
+- Database has been indexed with tiddler content
 
 ### Quick Start (Web UI)
 
@@ -94,28 +104,70 @@ A React-based web interface is available for easier interaction with the AI assi
 pip install -r requirements-api.txt
 ```
 
-2. **Start the API server**
+This installs Flask and Flask-CORS for the API server.
+
+2. **Configure the UI (optional)**
+```bash
+cd ui
+cp .env.example .env
+# Edit .env if you need to change the API URL (default: http://localhost:5000)
+```
+
+3. **Start the API server** (in the project root)
 ```bash
 python api_server.py
 ```
 
-The API will run on `http://localhost:5000`
+The API server will run on `http://localhost:5000` and provides a REST endpoint that wraps the Python `answer_question_with_tiddlers()` function.
 
-3. **In a new terminal, start the React UI**
+4. **In a new terminal, start the React UI**
 ```bash
 cd ui
-npm install
+npm install  # First time only
 npm run dev
 ```
 
 The UI will be available at `http://localhost:5173`
 
-4. **Use the interface**
-   - Enter your question in the text box
+5. **Use the interface**
+   - Enter your question in the text box (e.g., "How do I create a custom widget?")
    - Click Submit or press Enter
    - View the AI-generated answer with clickable source links
+   - Click on source links to view the original tiddlers in your browser
 
-See [ui/README.md](ui/README.md) for detailed UI documentation.
+### API Endpoints
+
+The Flask API server provides the following endpoints:
+
+- `POST /ask` - Submit a question and get an AI-generated answer
+  ```json
+  {
+    "question": "How do I create a custom widget?",
+    "top_k": 5,          // optional, default: 5
+    "model": "gpt-4o-mini"  // optional, default: gpt-4o-mini
+  }
+  ```
+
+- `GET /health` - Health check endpoint
+
+### Troubleshooting (Web UI)
+
+**"Unable to connect to the server"**
+- Ensure the Flask API server is running: `python api_server.py`
+- Check that the API is accessible at `http://localhost:5000/health`
+- Verify your `.env` file in the `ui` folder has the correct `VITE_API_URL`
+
+**"No results found" or errors**
+- Ensure the database has been indexed: `python tiddlywiki_api.py reindex`
+- Check that PostgreSQL is running and accessible
+- Verify your OpenAI API key is set in the main `.env` file
+
+**Page goes black or JavaScript errors**
+- Check the browser console for errors (F12)
+- Make sure all dependencies are installed: `cd ui && npm install`
+- Try clearing the browser cache or using an incognito window
+
+See [ui/README.md](ui/README.md) for detailed UI documentation, component architecture, and development instructions.
 
 ## Environment Variables
 
@@ -404,13 +456,24 @@ The `serve` command automatically creates and populates three TiddlyWiki folders
 
 ```
 tw-ai/
+├── ui/                  # React web interface
+│   ├── src/
+│   │   ├── components/  # Atomic Design components (atoms, molecules, organisms)
+│   │   ├── services/    # API communication layer
+│   │   └── App.jsx
+│   ├── .env.example
+│   ├── package.json
+│   └── README.md
 ├── TW.org/              # Official TiddlyWiki docs (auto-created fresh each time)
 ├── GrokTW/              # Grok TiddlyWiki tutorials (auto-created fresh each time)
 ├── DevTW/               # TiddlyWiki dev docs (auto-created fresh each time)
 ├── TW Hidden Settings/  # Custom tiddlers to inject into each wiki (optional)
-├── tiddlywiki_api.py
-├── .env
-└── ...
+├── tiddlywiki_api.py    # Core Python API functions
+├── api_server.py        # Flask REST API server
+├── requirements.txt     # Python dependencies
+├── requirements-api.txt # Additional Flask dependencies
+├── .env.example
+└── README.md
 ```
 
 **Automatic Setup:**
@@ -433,14 +496,19 @@ This means you don't need to manually set up these folders - just run the `serve
 
 ## Requirements
 
+### Core Requirements
 - **Python 3.8+**
 - **PostgreSQL 12+** with pgvector extension
 - **OpenAI API key** for embeddings and question answering
 - **TiddlyWiki** (Node.js version) for running local servers
 
+### Additional Requirements (Web UI)
+- **Node.js 14+** and npm for the React web interface
+- **Flask** for the REST API server (installed via requirements-api.txt)
+
 ### Python Dependencies
 
-All dependencies are listed in `requirements.txt`:
+Core dependencies are listed in `requirements.txt`:
 
 ```
 requests
@@ -452,9 +520,20 @@ langchain-openai
 
 The `langchain-openai` package automatically includes required dependencies like `langchain` and `langchain-core`.
 
-Install all dependencies with:
+Install core dependencies:
 ```bash
 pip install -r requirements.txt
+```
+
+For the Web UI, also install Flask dependencies:
+```bash
+pip install -r requirements-api.txt
+```
+
+This installs:
+```
+flask
+flask-cors
 ```
 
 ## Common Use Cases
